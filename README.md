@@ -1,171 +1,157 @@
-# Med Notebook
+# Med Notes
 
-A school-notebook style web app for your medical study notes. Courses → topics → notes, pictures, and saved AI conversations shown as speech bubbles. Works on your phone, even offline.
+A local-first, installable study-notes web app for medical students. Notes, images and saved AI conversations are organised in a notebook-style binder, work offline, and sync across devices through Cloudflare R2.
 
-## How it stores things (the idea first)
+Built with vanilla JavaScript and Cloudflare Pages Functions. No framework, no database, no build step.
 
-| What | Where it lives | Why |
-|---|---|---|
-| Your notes and folder structure | One file, `notebook/doc.json`, in your R2 bucket | Text is small. One file keeps syncing simple and lets search work instantly. |
-| Pictures | `notebook/images/<id>` in the same bucket | Pictures are big. R2 charges nothing for downloads. |
-| A copy for offline | Your phone or laptop browser (IndexedDB) | So you can review with no signal. Changes sync when you are back online. |
-| Daily safety copy | `notebook/backups/doc-<date>.json` in the bucket | Written automatically the first time you save each new day. |
+## Features
 
-Your bucket stays **private**. The browser never talks to R2 directly. It talks to this app's `/api` functions on Cloudflare Pages. Those functions reach your bucket through a **binding**, which is a connection Cloudflare sets up inside your own account. So there are **no API keys, no account ID and no CORS setup**. They check your password first.
+- Courses, topics and notes nested to any depth
+- Markdown notes with highlights, callouts, task lists, tables, `[[wiki links]]` and chat-style conversation blocks
+- Image paste and upload, compressed in the browser before sync
+- Offline-first: everything is saved on the device and syncs when a connection returns
+- Installable as a PWA on phone and desktop
+- Full-text search across all notes
+- Single-user password login and automatic daily backups
 
-When two devices change the same note, the **newer edit wins**. Deleting leaves a hidden marker, so an old copy on another device cannot bring a deleted note back.
+## Tech stack
 
-## Put it online on Cloudflare (about 10 minutes)
+| Layer | Choice |
+|---|---|
+| Frontend | Vanilla JavaScript, HTML, CSS (no framework, no bundler) |
+| Local storage | IndexedDB |
+| Offline | Service worker, web app manifest |
+| Backend | Cloudflare Pages Functions (Workers runtime) |
+| Cloud storage | Cloudflare R2, connected through a binding |
+| Auth | HMAC-signed HttpOnly cookie via the Web Crypto API |
+| Tests | Node's built-in test runner |
+| Hosting | Cloudflare Pages |
 
-Cloudflare's own tool, `wrangler`, uploads the project, so you do not need GitHub for this. You need Node 20.19 or newer.
+## Architecture
 
-### 1. Tell the app which bucket to use
-
-Open `wrangler.toml` and replace the bucket name with the exact name of your R2 bucket:
-
-```toml
-bucket_name = "your-bucket-name"
+```mermaid
+flowchart LR
+    A[Browser app] -->|read / write| B[(IndexedDB)]
+    A -->|POST /api/sync| C[Pages Functions]
+    A -->|GET / POST /api/image| C
+    C -->|binding| D[(R2 bucket)]
 ```
 
-Leave `binding = "BUCKET"` as it is. The code looks for that name.
+The browser is the primary copy of the data. The server is a thin layer that checks the login cookie, validates incoming data, merges it into the stored notebook and returns the result.
 
-### 2. Log in and create the project
+R2 holds three kinds of object:
 
-Run these in the project folder. The first opens a browser window to sign in to Cloudflare.
+| Key | Contents |
+|---|---|
+| `notebook/doc.json` | All notes and folders as one JSON document |
+| `notebook/images/<id>` | One object per image |
+| `notebook/backups/doc-<date>.json` | A copy of the previous day's document |
+
+## How it was built
+
+### 1. Local-first data model
+
+The notebook is a flat map of nodes keyed by id. Each node is a folder or a note and carries `parentId`, `order` and `updatedAt`. A flat map keeps merging simple, and moving a note is a one-field change. Every edit is written to IndexedDB first, so the app is fully usable offline.
+
+### 2. Sync by merging, not overwriting
+
+Two devices can edit the same notebook while offline, so the sync endpoint merges instead of replacing:
+
+- For each node id, the copy with the newer `updatedAt` wins.
+- A deletion is stored as a tombstone (`deleted: true` plus a timestamp), so an old copy on another device cannot bring a deleted note back.
+- On a timestamp tie, a delete wins.
+- A single `POST /api/sync` sends local changes and returns the merged notebook. The server only writes to R2 when the merge actually changed something.
+
+The same rule runs in the browser (`public/merge.js`) and on the server (`functions/_lib/merge.js`). A test checks that both copies give identical results on 500 random inputs, so they cannot drift apart.
+
+### 3. A small, safe backend
+
+- **Auth.** One password, compared in constant time. A successful login sets a signed, `HttpOnly`, `SameSite=Lax` cookie, and `Secure` on HTTPS. Cookies are signed with HMAC-SHA256 through the Web Crypto API. Without the password secret set, the API stays closed and the app runs in a local-only demo mode.
+- **Validation.** Every incoming node is cleaned on the server: ids and types are checked, strings are length-capped, unknown fields are dropped and the node count is limited.
+- **Images.** The browser shrinks pictures to WebP before upload. The server identifies the file type from its first bytes instead of trusting the client, stores that type with the object, and serves images with `nosniff` and a sandboxed Content-Security-Policy.
+
+### 4. Moving from Vercel to Cloudflare
+
+The first version ran on Vercel and reached R2 over its S3-compatible API with a hand-written SigV4 request signer. Moving to Cloudflare Pages let that code go:
+
+| Before | After |
+|---|---|
+| Account ID, access key and secret as environment variables | One R2 binding in `wrangler.toml` |
+| Hand-written SigV4 signer | `env.BUCKET.get()` and `env.BUCKET.put()` |
+| Node `crypto` | Web Crypto API |
+| Node request and response objects | Standard `Request` and `Response` |
+
+### 5. Custom Markdown renderer
+
+`public/md.js` is a small renderer written for this app instead of a library. It escapes HTML, blocks `javascript:` links and adds the app's own syntax: callouts, `==highlight==`, `[[wiki links]]` and `chat` blocks, which render a conversation as speech bubbles.
+
+### 6. Offline and installable
+
+A service worker caches the app shell and serves it immediately, refreshing it in the background. Images are cached after first view. API calls are never cached.
+
+### 7. Testing
+
+Backend tests run against an in-memory fake of the R2 binding, so they need no Cloudflare account. They cover:
+
+- the full login, sync, image and logout flow
+- merge rules and the server and browser merge parity check
+- input validation and image type sniffing
+- cookie signing, tampering and expiry
+- the closed-API behaviour when settings are missing
+
+## Project structure
 
 ```
+public/            App served as static files (index.html, app.js, md.js, merge.js, sw.js, styles, icons)
+functions/api/     Pages Functions: status, login, logout, sync, image
+functions/_lib/    Shared server code: config, auth, validation, merge, HTTP helpers
+test/              Backend and Markdown tests
+scripts/           Icon generation and a single-file demo build
+wrangler.toml      Cloudflare Pages settings and the R2 binding
+```
+
+## Getting started
+
+Requires Node.js 20.19 or newer and a Cloudflare account.
+
+```bash
+git clone https://github.com/<your-username>/med-notes.git
+cd med-notes
+cp .dev.vars.example .dev.vars   # set NOTEBOOK_PASSWORD
+npm run dev                      # http://localhost:8788
+npm test
+```
+
+`npm run dev` runs a local simulated R2 bucket, so development never touches real data.
+
+### Deploy
+
+1. Set `bucket_name` in `wrangler.toml` to your R2 bucket.
+2. Create the Pages project and deploy:
+
+```bash
 npx wrangler login
-npx wrangler pages project create anatomy-notebook --production-branch main
-```
-
-### 3. Deploy
-
-```
+npx wrangler pages project create <project-name> --production-branch main
 npx wrangler pages deploy
 ```
 
-It prints your address, which looks like `https://anatomy-notebook.pages.dev`.
+3. Set the password secret and deploy again:
 
-### 4. Set your password
-
-This is the password you will type to open the notebook. Make it long. The command asks you to type it, so it never sits in a file.
-
-```
-npx wrangler pages secret put NOTEBOOK_PASSWORD --project-name anatomy-notebook
+```bash
+npx wrangler pages secret put NOTEBOOK_PASSWORD --project-name <project-name>
+npx wrangler pages deploy
 ```
 
-Optional, but good to have: a second secret with any long random text, used to sign login cookies.
+## Limitations
 
-```
-npx wrangler pages secret put SESSION_SECRET --project-name anatomy-notebook
-```
+- Single user, one shared password. It is not a multi-user system.
+- The whole notebook is one JSON document, which suits personal notes but would need splitting for very large notebooks.
+- Concurrent edits to the same note resolve by newest timestamp, not by character-level merging.
 
-Then run `npx wrangler pages deploy` once more so the new secrets take effect.
+## Development notes
 
-### 5. Check it worked
+Developed with AI pair-programming assistance (Claude).
 
-Open `https://anatomy-notebook.pages.dev/api/status` (use your own address).
+## License
 
-| You see | It means |
-|---|---|
-| `{"cloud":true,"authed":false}` | Cloud mode is on. Open the app and sign in. |
-| `{"cloud":false,"missing":[...]}` | Those settings are missing. `BUCKET (R2 binding)` means the bucket name in `wrangler.toml` is wrong or the deploy did not read it. `NOTEBOOK_PASSWORD` means step 4 is not done. |
-
-Until both are set, the app runs in **demo mode**: notes stay in that browser only. Nothing is exposed, because the API stays closed.
-
-### If you would rather use the Cloudflare dashboard
-
-Upload the folder in **Workers & Pages → Create → Pages**, or connect a GitHub repo. Then open the project's **Settings**:
-
-| Setting | Value |
-|---|---|
-| Build output directory | `public` |
-| Bindings → R2 bucket | Variable name `BUCKET`, pick your bucket |
-| Variables and Secrets | `NOTEBOOK_PASSWORD` (Secret), optionally `SESSION_SECRET` |
-
-If the dashboard shows these as locked, it is because `wrangler.toml` already defines them. Edit the file instead.
-
-### Your old notes
-
-The file layout in the bucket is the same as before (`notebook/doc.json`, `notebook/images/...`). If you used the Vercel version with the same bucket, your notes and pictures are already there. Sign in and they appear.
-
-### Your own domain (optional)
-
-Your address is free and works well for an app on your home screen. To use your own domain later, open the project → **Custom domains**. The domain has to be on Cloudflare, or you can move its name servers there.
-
-### Extra login protection (optional)
-
-Cloudflare Zero Trust **Access** can put an email-code login in front of the whole site. I have not tested this with the notebook. If you turn it on, you sign in twice (Cloudflare, then the notebook password). The password alone is fine for notes.
-
-### Install it on your phone
-
-Open the site in Chrome → menu → **Add to Home screen** (or **Install app**). It then opens like a normal app, full screen.
-
-## Using it
-
-| To do this | Do this |
-|---|---|
-| Add a course | **+** at the top of the binder, or the round **+** button |
-| Group notes (Micronutrients → Vitamins, Minerals) | Open a folder → **New topic**. Topics can go as deep as you like. |
-| Write a note | Open it → **Write**. **Read** is for studying, **Split** (wide screens) shows both. |
-| Add a picture | Picture button in the toolbar, or paste a screenshot into the page. Text in `![caption](...)` becomes the caption. |
-| Save an AI chat | Speech-bubble button → paste the chat → **Insert** |
-| Mark something to revisit | ★ at the top. Marked notes appear on the home page under "Marked for review". |
-| Link notes | Type `[[Vitamins]]` |
-| Search everything | Magnifier, or `Ctrl/⌘ + K` |
-| Back up | Settings → **Backup** (notes only; pictures live in R2) |
-
-### Conversations (two or more people talking)
-
-Write each speaker's name, a colon, then the text. Put the whole conversation inside a `chat` block:
-
-````
-```chat
-Excel: Why do fat-soluble vitamins need fat?
-Claude: Because they dissolve in fat, not water.
-It travels in tiny droplets called micelles.
-Dr Ada: I can add to that.
-```
-````
-
-- A line starting with `Name:` begins a new bubble. Lines after it stay in the same bubble.
-- **Excel** (also Me, You, User) is shown on the right in blue. **Claude** is terracotta, **ChatGPT** green, **Gemini** purple. Anyone else gets their own colour.
-- If someone speaks only **once**, write `@Name:` (for example `@Dr Ada:`) so it is not mistaken for a normal word like "Note:".
-- Pasting "You said:" / "Claude said:" works too. "You" becomes your name (change it in Settings).
-
-### Extras in the notes
-
-| Write | You get |
-|---|---|
-| `==important==` | a highlighter mark |
-| `> [!KEY] Title` then `> text` | a boxed callout. Types: `KEY`, `DEF`, `EX`, `TIP`, `WARN`, `EXAM`, `MISTAKE`, `NOTE` |
-| `- [ ] task` | a tick box you can tap in Read mode |
-| a table with `\|` | a ruled table |
-
-## Limits to know
-
-- **The app limits one request to about 4 MB.** Pictures are shrunk to WebP (about 100-300 KB) before upload, so this never bites. The notes file would have to reach several MB of text before it did.
-- **Free-plan CPU time (estimate, check Cloudflare's current limits):** each request gets a few milliseconds of processing. Syncing reads and writes the whole notes file, so a very large notebook (many MB of text) could one day hit that. If it does, the app shows a sync error, and the fix is a paid plan or splitting the notes file. A normal course's notes are far below this.
-- It is a **single-user** app with one password. Do not share the password.
-- Passwords are checked by the server and the login cookie is `HttpOnly`, but this is not a bank. Use a long password.
-- The handwriting fonts (Caveat, Patrick Hand) load from Google Fonts the first time you are online, then work offline. **Settings → Text → Clean** switches to a plain font.
-
-## Run it on your computer (optional)
-
-```
-cp .dev.vars.example .dev.vars     # then type a password after NOTEBOOK_PASSWORD=
-npm run dev                        # http://localhost:8788
-npm test                           # runs the automated tests (no Cloudflare account needed)
-```
-
-`npm run dev` uses a **local pretend R2 bucket** that lives in a `.wrangler` folder, so test notes never touch your real bucket.
-
-## What is in the folder
-
-| Path | What it is |
-|---|---|
-| `public/` | The app you see: `index.html`, `style.css`, `app.js`, `md.js` (note formatting), `merge.js` (sync rules), icons, offline worker, `_headers` |
-| `functions/api/` | Five small server functions: `status`, `login`, `logout`, `sync`, `image` |
-| `functions/_lib/` | Shared server code: login cookies, checks on incoming data, the sync rule |
-| `wrangler.toml` | Connects your R2 bucket (the binding) and tells Pages to serve `public/` |
-| `test/` | Automated tests, including a check that the server and browser sync rules always agree |
+[MIT](LICENSE)
