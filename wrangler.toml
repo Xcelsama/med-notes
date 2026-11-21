@@ -1,9 +1,7 @@
-# Cloudflare Pages settings. The R2 bucket is connected here as a "binding",
-# so the app talks to R2 directly: no account ID, no access keys, no API token.
-name = "anatomy-notebook"
+name = "med-notes"
 compatibility_date = "2024-11-01"
 pages_build_output_dir = "public"
 
 [[r2_buckets]]
-binding = "BUCKET"                              # keep this name: the code looks for env.BUCKET
-bucket_name = "bucket"   # <- the exact name of your R2 bucket
+binding = "BUCKET"
+bucket_name = "bucket"
