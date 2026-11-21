@@ -69,8 +69,9 @@
   const PALETTE = ['#2e7d57', '#8e3fa0', '#a8700a', '#b8324a', '#13807f', '#5b6b2a'];
   const LABEL = /^\s*(@)?(?:\*\*|__)?([A-Za-zÀ-ɏ][A-Za-z0-9À-ɏ .'’-]{0,29}?)(?:\*\*|__)?:(?:\*\*|__)?(?:\s+(.*)|$)/;
 
-  function speakerColor(name) {
+  function speakerColor(name, me) {
     const k = String(name).toLowerCase();
+    if (me && k === String(me).toLowerCase()) return FIXED.me; // the signed-in person is shown like "Me": blue, on the right
     if (FIXED[k]) return FIXED[k];
     let h = 0;
     for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0;
@@ -116,8 +117,9 @@
     for (const t of turns) {
       const body = render(t.text, inner);
       if (!t.who) { html += '<div class="turn note-turn"><div class="bubble">' + body + '</div></div>'; continue; }
-      const side = RIGHT.test(t.who) ? 'right' : 'left';
-      html += '<div class="turn ' + side + '" style="--pen:' + speakerColor(t.who) + '"><div class="who">' + esc(t.who) +
+      const mine = ctx && ctx.me && t.who.toLowerCase() === String(ctx.me).toLowerCase();
+      const side = RIGHT.test(t.who) || mine ? 'right' : 'left';
+      html += '<div class="turn ' + side + '" style="--pen:' + speakerColor(t.who, ctx && ctx.me) + '"><div class="who">' + esc(t.who) +
         '</div><div class="bubble">' + body + '</div></div>';
     }
     return html + '</div>';

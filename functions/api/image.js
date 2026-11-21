@@ -1,7 +1,7 @@
 // POST /api/image?id=<id>   body = the image bytes   -> stores it in R2
 // GET  /api/image?id=<id>                            -> streams it back (needs the login cookie)
 import { getConfig } from '../_lib/config.js';
-import { isAuthed } from '../_lib/auth.js';
+import { currentUser } from '../_lib/auth.js';
 import { json, readBytes } from '../_lib/http.js';
 import { sniffImage, IMAGE_ID } from '../_lib/validate.js';
 
@@ -10,7 +10,8 @@ const MAX_BYTES = 4 * 1024 * 1024; // the app shrinks pictures well below this b
 export async function onRequest({ request, env }) {
   const cfg = getConfig(env);
   if (!cfg.ready) return json(503, { error: 'not_configured', reason: cfg.reason });
-  if (!(await isAuthed(cfg, request))) return json(401, { error: 'unauthorized' });
+  // pictures are fetched many times per page, so only the cookie signature is checked here (no extra read from R2)
+  if (!(await currentUser(cfg, request, { strict: false }))) return json(401, { error: 'unauthorized' });
 
   const id = new URL(request.url).searchParams.get('id');
   if (!id || !IMAGE_ID.test(id)) return json(400, { error: 'bad_id' });

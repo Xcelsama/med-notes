@@ -20,6 +20,7 @@ html = html
   .replace('<link rel="stylesheet" href="style.css">', () => '<style>\n' + read('style.css') + '\n</style>')
   .replace('<script src="merge.js"></script>', () => (fragment ? '<script>window.__NB_DEMO = true;</script>\n' : '') + '<script>\n' + safeScript(read('merge.js')) + '\n</script>')
   .replace('<script src="md.js"></script>', () => '<script>\n' + safeScript(read('md.js')) + '\n</script>')
+  .replace('<script src="prompts.js"></script>', () => '<script>\n' + safeScript(read('prompts.js')) + '\n</script>')
   .replace('<script src="app.js"></script>', () => '<script>\n' + safeScript(read('app.js')) + '\n</script>');
 
 if (fragment) {

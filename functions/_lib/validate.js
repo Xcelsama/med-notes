@@ -3,6 +3,8 @@ const MAX_NODES = 20000;
 const MAX_TITLE = 300;
 const MAX_BODY = 1_500_000;
 
+const cleanBy = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 40) : '');
+
 export function cleanNode(n) {
   if (!n || typeof n !== 'object') return null;
   if (typeof n.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(n.id)) return null;
@@ -19,6 +21,11 @@ export function cleanNode(n) {
     updatedAt,
   };
   if (n.deleted) out.deleted = true;
+  // who made / last saved it. The server overwrites these with the signed-in person's name (see api/sync.js)
+  const by = cleanBy(n.by);
+  const createdBy = cleanBy(n.createdBy);
+  if (by) out.by = by;
+  if (createdBy) out.createdBy = createdBy;
   if (n.type === 'note') {
     out.body = String(n.body == null ? '' : n.body).slice(0, MAX_BODY);
     if (n.starred) out.starred = true;

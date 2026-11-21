@@ -4,23 +4,29 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { merge } from '../functions/_lib/merge.js';
 import { cleanNodes, sniffImage } from '../functions/_lib/validate.js';
-import { makeToken, verifyToken } from '../functions/_lib/auth.js';
+import { makeToken, readToken } from '../functions/_lib/auth.js';
+import { stampAuthors } from '../functions/_lib/authors.js';
+import { cleanName } from '../functions/_lib/users.js';
 import { getConfig } from '../functions/_lib/config.js';
 import * as status from '../functions/api/status.js';
 import * as login from '../functions/api/login.js';
 import * as logout from '../functions/api/logout.js';
+import * as register from '../functions/api/register.js';
+import * as account from '../functions/api/account.js';
 import * as sync from '../functions/api/sync.js';
 import * as image from '../functions/api/image.js';
 
 // A tiny in-memory stand-in for an R2 bucket binding (same get/put shape as the real one).
 function fakeBucket() {
   const store = new Map();
+  let etagN = 0;
   return {
     store,
     async get(key) {
       const o = store.get(key);
       if (!o) return null;
       return {
+        etag: o.etag,
         httpMetadata: { contentType: o.type },
         body: new Blob([o.bytes]).stream(),
         async text() { return new TextDecoder().decode(o.bytes); },
@@ -28,14 +34,18 @@ function fakeBucket() {
       };
     },
     async put(key, value, opts = {}) {
+      const cur = store.get(key);
+      const c = opts.onlyIf || {};
+      if (c.etagMatches && (!cur || cur.etag !== c.etagMatches)) return null;   // like R2: null = condition failed
+      if (c.etagDoesNotMatch === '*' && cur) return null;
       const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value);
-      store.set(key, { bytes, type: opts.httpMetadata && opts.httpMetadata.contentType });
+      store.set(key, { bytes, type: opts.httpMetadata && opts.httpMetadata.contentType, etag: 'e' + (++etagN) });
     },
   };
 }
 
 const BASE = 'https://notebook.test';
-const handlers = { status, login, logout, sync, image };
+const handlers = { status, login, logout, sync, image, register, account };
 const call = (name, env, path, { method = 'GET', cookie, body, headers = {} } = {}) =>
   handlers[name].onRequest({
     request: new Request(BASE + path, { method, body, headers: { ...(cookie ? { cookie } : {}), ...headers } }),
@@ -99,13 +109,58 @@ test('validate: image sniffing rejects non-images', () => {
   assert.equal(sniffImage(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0])), 'image/jpeg');
 });
 
-test('auth tokens: valid, tampered, expired', async () => {
-  const cfg = { password: 'pw', sessionSecret: '' };
-  const t = await makeToken(cfg);
-  assert.equal(await verifyToken(cfg, t), true);
-  assert.equal(await verifyToken(cfg, t.slice(0, -2) + 'xx'), false);
-  assert.equal(await verifyToken({ password: 'other', sessionSecret: '' }, t), false, 'new password signs sessions out');
-  assert.equal(await verifyToken(cfg, t, Date.now() + 40 * 86400 * 1000), false);
+test('session tokens: valid, tampered, expired, tied to the account', async () => {
+  const cfg = { password: 'code', sessionSecret: '' };
+  const t = await makeToken(cfg, { key: 'ada', sv: 'abc123' });
+  assert.deepEqual(await readToken(cfg, t), { key: 'ada', sv: 'abc123' });
+  assert.equal(await readToken(cfg, t.slice(0, -2) + 'xx'), null, 'edited signature');
+  const [k, sv, exp, sig] = t.split('.');
+  const bob = Buffer.from('bob').toString('base64url');
+  assert.equal(await readToken(cfg, [bob, sv, exp, sig].join('.')), null, 'cannot swap in another name');
+  assert.equal(await readToken({ password: 'other', sessionSecret: '' }, t), null, 'new access code signs sessions out');
+  assert.equal(await readToken(cfg, t, Date.now() + 40 * 86400 * 1000), null, 'expired');
+  assert.equal(await readToken(cfg, 'junk'), null);
+});
+
+test('names: trimmed, limited, case-insensitive handled by key', () => {
+  assert.equal(cleanName('  Ada   Obi '), 'Ada Obi');
+  assert.equal(cleanName('A'), null);
+  assert.equal(cleanName('x'.repeat(25)), null);
+  assert.equal(cleanName('<script>'), null);
+  assert.equal(cleanName('Chidi_O.'), 'Chidi_O.');
+  assert.equal(cleanName(null), null);
+});
+
+test('stampAuthors: names come from the session, not the browser', () => {
+  const base = {
+    old: { id: 'old', createdBy: 'Ada', by: 'Ada', updatedAt: 1 },
+    legacy: { id: 'legacy', updatedAt: 1 },
+  };
+  const incoming = {
+    fresh: { id: 'fresh', by: 'Somebody Else', createdBy: 'Somebody Else', updatedAt: 5 },          // new note: forged names are replaced
+    old: { id: 'old', createdBy: 'Mallory', by: 'Mallory', updatedAt: 5 },                           // forged: createdBy locked, by = sender
+    legacy: { id: 'legacy', by: 'Bob', createdBy: 'Bob', updatedAt: 5 },                             // legacy note: cannot claim createdBy
+  };
+  const merged = { fresh: incoming.fresh, old: incoming.old, legacy: incoming.legacy };
+  stampAuthors(merged, base, incoming, 'Bob');
+  assert.equal(merged.fresh.by, 'Bob');
+  assert.equal(merged.fresh.createdBy, 'Bob');
+  assert.equal(merged.old.createdBy, 'Ada');
+  assert.equal(merged.old.by, 'Bob');
+  assert.equal(merged.legacy.createdBy, undefined);
+  assert.equal(merged.legacy.by, 'Bob');
+
+  // a star/move (not an edit) keeps the previous 'saved by', even though a different person sent it
+  const inc2 = { old: { id: 'old', createdBy: 'Ada', by: 'Ada', starred: true, updatedAt: 9 } };
+  const m2 = { old: inc2.old };
+  stampAuthors(m2, base, inc2, 'Bob');
+  assert.equal(m2.old.by, 'Ada');
+
+  // a copy that lost the merge is left alone
+  const stored = { id: 'old', by: 'Ada', updatedAt: 99 };
+  const m3 = { old: stored };
+  stampAuthors(m3, base, { old: { id: 'old', by: 'Eve', updatedAt: 3 } }, 'Eve');
+  assert.equal(m3.old.by, 'Ada');
 });
 
 test('config reports which settings are missing (names only)', () => {
@@ -129,24 +184,44 @@ test('API end to end against a fake R2 binding', async () => {
   const post = (name, path, cookie, body, extra = {}) => call(name, env, path, { method: 'POST', cookie, body, ...extra });
 
   let r = await call('status', env, '/api/status');
-  assert.deepEqual(await r.json(), { cloud: true, authed: false });
+  assert.deepEqual(await r.json(), { cloud: true, authed: false, setup: true });
 
   // everything is locked without a cookie
   assert.equal((await call('sync', env, '/api/sync')).status, 401);
   assert.equal((await call('image', env, '/api/image?id=abcdef12')).status, 401);
 
-  // wrong password, then right password -> cookie
-  r = await post('login', '/api/login', null, JSON.stringify({ password: 'nope' }));
-  assert.equal(r.status, 401);
-  r = await post('login', '/api/login', null, JSON.stringify({ password: 'correct horse' }));
+  // creating the first account needs the access code; the first account is the admin
+  const reg = (b) => post('register', '/api/register', null, JSON.stringify(b));
+  assert.equal((await reg({ name: 'Excel', password: 'secret1', code: 'wrong' })).status, 403);
+  assert.equal((await reg({ name: 'X', password: 'secret1', code: 'correct horse' })).status, 400, 'name too short');
+  assert.equal((await reg({ name: 'Excel', password: '123', code: 'correct horse' })).status, 400, 'password too short');
+  r = await reg({ name: 'Excel', password: 'secret1', code: 'correct horse' });
   assert.equal(r.status, 200);
+  assert.deepEqual((await r.json()).user, { name: 'Excel', admin: true });
+  assert.equal((await call('status', env, '/api/status')).status, 200);
+  assert.equal((await (await call('status', env, '/api/status')).json()).setup, false);
+  // the stored file holds a hash, never the password
+  const usersFile = new TextDecoder().decode(bucket.store.get('notebook/users.json').bytes);
+  assert.ok(!usersFile.includes('secret1'));
+  assert.equal((await reg({ name: 'excel', password: 'another1', code: 'correct horse' })).status, 409, 'same name in any case is taken');
+
+  // wrong name / wrong password look the same, then the right ones -> cookie
+  r = await post('login', '/api/login', null, JSON.stringify({ name: 'Excel', password: 'nope' }));
+  assert.equal(r.status, 401);
+  r = await post('login', '/api/login', null, JSON.stringify({ name: 'Nobody', password: 'secret1' }));
+  assert.equal(r.status, 401);
+  r = await post('login', '/api/login', null, JSON.stringify({ name: 'EXCEL', password: 'secret1' }));
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).user.name, 'Excel');
   const setCookie = r.headers.get('set-cookie');
   assert.match(setCookie, /HttpOnly/);
   assert.match(setCookie, /Secure/); // https request
   const cookie = setCookie.split(';')[0];
 
   r = await call('status', env, '/api/status', { cookie });
-  assert.equal((await r.json()).authed, true);
+  const st = await r.json();
+  assert.equal(st.authed, true);
+  assert.deepEqual(st.user, { name: 'Excel', admin: true });
 
   // sync: device A pushes a note
   const now = Date.now();
@@ -210,10 +285,80 @@ test('API end to end against a fake R2 binding', async () => {
 
 test('cookie has no Secure flag on plain http (local dev)', async () => {
   const env = { BUCKET: fakeBucket(), NOTEBOOK_PASSWORD: 'pw' };
-  const r = await login.onRequest({
-    request: new Request('http://localhost:8788/api/login', { method: 'POST', body: JSON.stringify({ password: 'pw' }) }),
+  const r = await register.onRequest({
+    request: new Request('http://localhost:8788/api/register', { method: 'POST', body: JSON.stringify({ name: 'Local', password: 'secret1', code: 'pw' }) }),
     env,
   });
   assert.equal(r.status, 200);
   assert.ok(!/Secure/.test(r.headers.get('set-cookie')));
+});
+
+test('several people: own passwords, "saved by", admin tools, sign-out on password change', async () => {
+  const bucket = fakeBucket();
+  const env = { BUCKET: bucket, NOTEBOOK_PASSWORD: 'class-code' };
+  const send = async (name, path, body, cookie) => {
+    const r = await call(name, env, path, { method: 'POST', cookie, body: JSON.stringify(body) });
+    return { r, j: await r.clone().json().catch(() => null), cookie: (r.headers.get('set-cookie') || '').split(';')[0] };
+  };
+  const ada = await send('register', '/api/register', { name: 'Ada', password: 'ada-pass', code: 'class-code' });
+  const bob = await send('register', '/api/register', { name: 'Bob', password: 'bob-pass', code: 'class-code' });
+  assert.equal(ada.j.user.admin, true);
+  assert.equal(bob.j.user.admin, false);
+
+  // each person's note carries THEIR name, even if the browser claims another one
+  const t = Date.now();
+  const mk = (id, by, extra = {}) => ({ id, type: 'note', parentId: null, title: id, body: 'x', order: 1, createdAt: t, updatedAt: t, by, createdBy: by, ...extra });
+  let s = await send('sync', '/api/sync', { nodes: { a1: mk('a1', 'Ada') } }, ada.cookie);
+  assert.equal(s.j.nodes.a1.by, 'Ada');
+  s = await send('sync', '/api/sync', { nodes: { b1: mk('b1', 'Ada') } }, bob.cookie);   // Bob pretends to be Ada
+  assert.equal(s.j.nodes.b1.by, 'Bob');
+  assert.equal(s.j.nodes.b1.createdBy, 'Bob');
+  assert.equal(s.j.nodes.a1.by, 'Ada');
+  // Bob edits Ada's note: saved by Bob now, started by Ada still
+  s = await send('sync', '/api/sync', { nodes: { a1: mk('a1', 'Bob', { body: 'edited', updatedAt: t + 10, createdBy: 'Bob' }) } }, bob.cookie);
+  assert.equal(s.j.nodes.a1.by, 'Bob');
+  assert.equal(s.j.nodes.a1.createdBy, 'Ada');
+  // a full push of unchanged copies does not re-stamp anybody
+  const all = (await send('sync', '/api/sync', { nodes: {} }, ada.cookie)).j.nodes;
+  s = await send('sync', '/api/sync', { nodes: all }, ada.cookie);
+  assert.equal(s.j.nodes.a1.by, 'Bob');
+  assert.equal(s.j.nodes.b1.by, 'Bob');
+
+  // only the admin can manage people
+  assert.equal((await send('account', '/api/account', { action: 'list' }, bob.cookie)).r.status, 403);
+  const list = await send('account', '/api/account', { action: 'list' }, ada.cookie);
+  assert.deepEqual(list.j.users.map((u) => u.name), ['Ada', 'Bob']);
+  assert.equal((await send('account', '/api/account', { action: 'remove', name: 'Ada' }, ada.cookie)).r.status, 400, 'cannot remove yourself');
+  assert.equal((await send('account', '/api/account', { action: 'nonsense' }, ada.cookie)).r.status, 400);
+
+  // Bob changes his password: needs the old one; his old cookie dies, the new cookie works
+  assert.equal((await send('account', '/api/account', { action: 'password', old: 'wrong', password: 'bob-new1' }, bob.cookie)).r.status, 403);
+  const ch = await send('account', '/api/account', { action: 'password', old: 'bob-pass', password: 'bob-new1' }, bob.cookie);
+  assert.equal(ch.r.status, 200);
+  assert.equal((await call('sync', env, '/api/sync', { cookie: bob.cookie })).status, 401, 'old session is signed out');
+  assert.equal((await call('sync', env, '/api/sync', { cookie: ch.cookie })).status, 200);
+  assert.equal((await send('login', '/api/login', { name: 'Bob', password: 'bob-pass' })).r.status, 401);
+  assert.equal((await send('login', '/api/login', { name: 'Bob', password: 'bob-new1' })).r.status, 200);
+
+  // admin resets Bob, then removes him: his sessions stop working, his notes stay and keep his name
+  assert.equal((await send('account', '/api/account', { action: 'reset', name: 'Bob', password: 'temp-pass1' }, ada.cookie)).r.status, 200);
+  assert.equal((await call('sync', env, '/api/sync', { cookie: ch.cookie })).status, 401);
+  const login2 = await send('login', '/api/login', { name: 'Bob', password: 'temp-pass1' });
+  assert.equal(login2.r.status, 200);
+  assert.equal((await send('account', '/api/account', { action: 'remove', name: 'Bob' }, ada.cookie)).r.status, 200);
+  assert.equal((await call('sync', env, '/api/sync', { cookie: login2.cookie })).status, 401);
+  assert.equal((await call('image', env, '/api/image?id=abcdef12', { cookie: login2.cookie })).status, 404, 'pictures only check the signature (cheap), so a removed person gets "not found", never data');
+  const final = await (await call('sync', env, '/api/sync', { cookie: ada.cookie })).json();
+  assert.equal(final.nodes.b1.by, 'Bob');
+});
+
+test('two accounts created at the same moment are both kept', async () => {
+  const bucket = fakeBucket();
+  const env = { BUCKET: bucket, NOTEBOOK_PASSWORD: 'c' };
+  const reg = (name) => call('register', env, '/api/register', { method: 'POST', body: JSON.stringify({ name, password: 'password1', code: 'c' }) });
+  const rs = await Promise.all([reg('Ann'), reg('Ben'), reg('Cy')]);
+  assert.ok(rs.every((r) => r.status === 200), 'all succeed');
+  const users = JSON.parse(new TextDecoder().decode(bucket.store.get('notebook/users.json').bytes)).users;
+  assert.deepEqual(Object.keys(users).sort(), ['ann', 'ben', 'cy']);
+  assert.equal(Object.values(users).filter((u) => u.admin).length, 1, 'exactly one admin');
 });

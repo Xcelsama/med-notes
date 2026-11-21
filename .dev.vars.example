@@ -1,5 +1,6 @@
 # For running on your own computer (npm run dev). Copy this file to ".dev.vars" and fill it in.
-# Never commit .dev.vars. On the live site, set the password with the command in README.md instead.
+# Never commit .dev.vars. On the live site, set the access code with the command in README.md instead.
+# The class access code: people type it once to create their own account.
 NOTEBOOK_PASSWORD=
 # Optional: a long random string used to sign login cookies
 # SESSION_SECRET=

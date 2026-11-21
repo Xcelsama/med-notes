@@ -87,3 +87,11 @@ test('plain() strips markup for search', () => {
   // text inside a saved conversation must be searchable
   assert.match(MD.plain('```chat\nExcel: What is a sesamoid bone?\nClaude: A bone in a tendon.\n```'), /sesamoid bone/);
 });
+
+test('chat: the signed-in name is shown on the right like "Me"', () => {
+  const html = MD.render('```chat\nAda: What is a tendon?\nClaude: Muscle to bone.\n```', { me: 'Ada' });
+  assert.match(html, /turn right[^>]*><div class="who">Ada/);
+  assert.match(html, /turn left[^>]*><div class="who">Claude/);
+  const other = MD.render('```chat\nAda: What is a tendon?\nClaude: Muscle to bone.\n```', {});
+  assert.match(other, /turn left[^>]*><div class="who">Ada/);
+});

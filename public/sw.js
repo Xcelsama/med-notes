@@ -2,9 +2,9 @@
 // App files: serve the cached copy at once, refresh it in the background.
 // Pictures (/api/image): cached once seen, so they still show with no signal.
 // Everything else under /api is never cached.
-const APP = 'nb-app-v2';
+const APP = 'nb-app-v3';
 const IMG = 'nb-img';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'md.js', 'merge.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png'];
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'md.js', 'prompts.js', 'merge.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(APP).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

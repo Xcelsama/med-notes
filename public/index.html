@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Med Notebook</title>
 <meta name="description" content="A school-notebook style app for medical study notes, images and saved AI conversations.">
 <meta name="theme-color" content="#f4eee0">
@@ -22,6 +22,7 @@
   <div id="main">
     <header id="topbar"></header>
     <div id="scroll"><div id="view"></div></div>
+    <div id="dock" hidden></div>
   </div>
 </div>
 <button id="fab" aria-label="New" hidden></button>
@@ -30,6 +31,7 @@
 <div id="lock" hidden></div>
 <script src="merge.js"></script>
 <script src="md.js"></script>
+<script src="prompts.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

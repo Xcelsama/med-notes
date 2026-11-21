@@ -2,10 +2,11 @@
 //   POST { nodes: { id: node } }  -> merges the changes into the notebook in R2, returns the full result
 //   GET                           -> returns the notebook as stored in R2
 import { getConfig } from '../_lib/config.js';
-import { isAuthed } from '../_lib/auth.js';
+import { currentUser } from '../_lib/auth.js';
 import { json, readJson } from '../_lib/http.js';
 import { cleanNodes } from '../_lib/validate.js';
 import { merge } from '../_lib/merge.js';
+import { stampAuthors } from '../_lib/authors.js';
 
 const DOC_KEY = 'notebook/doc.json';
 
@@ -25,7 +26,8 @@ const put = (bucket, key, value) => bucket.put(key, JSON.stringify(value), { htt
 export async function onRequest({ request, env }) {
   const cfg = getConfig(env);
   if (!cfg.ready) return json(503, { error: 'not_configured', reason: cfg.reason });
-  if (!(await isAuthed(cfg, request))) return json(401, { error: 'unauthorized' });
+  const user = await currentUser(cfg, request);
+  if (!user) return json(401, { error: 'unauthorized' });
   if (request.method !== 'GET' && request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
 
   try {
@@ -36,6 +38,7 @@ export async function onRequest({ request, env }) {
 
     const incoming = cleanNodes(body.nodes);
     const merged = merge(doc.nodes, incoming);
+    if (merged.changedBase) stampAuthors(merged.nodes, doc.nodes, incoming, user.name);
     if (!merged.changedBase) return json(200, { rev: doc.rev, nodes: doc.nodes });
 
     // Once a day, keep a copy of the previous version as a free safety net.
