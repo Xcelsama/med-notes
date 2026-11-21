@@ -1,5 +1,5 @@
 {
-  "name": "anatomy-notebook",
+  "name": "med-notebook",
   "version": "2.0.0",
   "private": true,
   "description": "A school-notebook style web app for anatomy study notes. Runs on Cloudflare Pages; notes and images live in an R2 bucket.",

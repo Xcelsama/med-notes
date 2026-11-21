@@ -1,6 +1,6 @@
-# Anatomy Notebook
+# Med Notebook
 
-A school-notebook style web app for your anatomy notes. Courses → topics → notes, pictures, and saved AI conversations shown as speech bubbles. Works on your phone, even offline.
+A school-notebook style web app for your medical study notes. Courses → topics → notes, pictures, and saved AI conversations shown as speech bubbles. Works on your phone, even offline.
 
 ## How it stores things (the idea first)
 

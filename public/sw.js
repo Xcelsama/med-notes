@@ -2,7 +2,7 @@
 // App files: serve the cached copy at once, refresh it in the background.
 // Pictures (/api/image): cached once seen, so they still show with no signal.
 // Everything else under /api is never cached.
-const APP = 'nb-app-v1';
+const APP = 'nb-app-v2';
 const IMG = 'nb-img';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'md.js', 'merge.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png'];
 

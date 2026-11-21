@@ -1,7 +1,7 @@
 {
-  "name": "Anatomy Notebook",
+  "name": "Med Notebook",
   "short_name": "Notebook",
-  "description": "School-notebook style study notes for Anatomy.",
+  "description": "School-notebook style study notes for medicine.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

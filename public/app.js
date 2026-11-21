@@ -1,4 +1,4 @@
-/* Anatomy Notebook — app logic. Local-first: everything is saved on the device (IndexedDB) and,
+/* Med Notebook — app logic. Local-first: everything is saved on the device (IndexedDB) and,
    when the Cloudflare R2 variables are set on the server, synced to the bucket. */
 (() => {
   'use strict';
@@ -514,7 +514,7 @@
   function buildBinder() {
     $('#binder').innerHTML = `
       <div class="binder-head">
-        <div class="brand" data-act="home">Anatomy Notebook<small>My study binder</small></div>
+        <div class="brand" data-act="home">Med Notebook<small>My study binder</small></div>
         <button class="iconbtn" data-act="search" aria-label="Search">${icon('search')}</button>
         <button class="iconbtn" data-act="newCourse" aria-label="New course">${icon('plus')}</button>
       </div>
@@ -556,7 +556,7 @@
     if (r.kind !== 'home' && node(r.id)) {
       const chain = [...pathOf(r.id), node(r.id)];
       crumbs = chain.map((n, i) => i === chain.length - 1 ? `<span>${esc(n.title || 'Untitled')}</span>` : `<a data-go="folder:${n.id}">${esc(n.title || 'Untitled')}</a>`).join('<span class="sep">›</span>');
-    } else crumbs = '<span>Anatomy Notebook</span>';
+    } else crumbs = '<span>Med Notebook</span>';
     const n = r.kind !== 'home' ? node(r.id) : null;
     $('#topbar').innerHTML = `
       <button class="iconbtn" id="menuBtn" data-act="drawer" aria-label="Menu">${icon('menu')}</button>
@@ -1020,7 +1020,7 @@
   }
   function backup() {
     const data = { app: 'anatomy-notebook', v: 1, exportedAt: new Date().toISOString(), nodes: S.doc.nodes };
-    download('anatomy-notebook-backup-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(data, null, 1), 'application/json');
+    download('med-notebook-backup-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(data, null, 1), 'application/json');
     toast('Backup downloaded (notes only; pictures stay in your R2 bucket)');
   }
   async function restore() {
@@ -1042,7 +1042,7 @@
   function showLock(msg) {
     const lock = $('#lock');
     lock.hidden = false;
-    lock.innerHTML = `<form class="card" id="lockForm"><img src="icon.svg" width="72" height="72" alt="" style="border-radius:18px"><h2>Anatomy Notebook</h2><p>${esc(msg || 'Enter your password to open your notes.')}</p><input type="password" id="pw" placeholder="Password" autocomplete="current-password" autofocus><button class="btn primary" type="submit">Open notebook</button><div class="err" id="lockErr"></div></form>`;
+    lock.innerHTML = `<form class="card" id="lockForm"><img src="icon.svg" width="72" height="72" alt="" style="border-radius:18px"><h2>Med Notebook</h2><p>${esc(msg || 'Enter your password to open your notes.')}</p><input type="password" id="pw" placeholder="Password" autocomplete="current-password" autofocus><button class="btn primary" type="submit">Open notebook</button><div class="err" id="lockErr"></div></form>`;
     const form = $('#lockForm');
     setTimeout(() => $('#pw') && $('#pw').focus(), 50);
     form.addEventListener('submit', async (e) => {

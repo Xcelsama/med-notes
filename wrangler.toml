@@ -6,4 +6,4 @@ pages_build_output_dir = "public"
 
 [[r2_buckets]]
 binding = "BUCKET"                              # keep this name: the code looks for env.BUCKET
-bucket_name = "bucket"
+bucket_name = "bucket"   # <- the exact name of your R2 bucket
