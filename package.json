@@ -1,0 +1,13 @@
+{
+  "name": "anatomy-notebook",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A school-notebook style web app for anatomy study notes. Runs on Cloudflare Pages; notes and images live in an R2 bucket.",
+  "engines": { "node": ">=20.19" },
+  "scripts": {
+    "dev": "npx wrangler pages dev",
+    "deploy": "npx wrangler pages deploy",
+    "test": "node --test test/backend.test.mjs test/md.test.js",
+    "icons": "python3 scripts/make-icons.py"
+  }
+}

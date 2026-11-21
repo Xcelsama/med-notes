@@ -1,0 +1,5 @@
+# For running on your own computer (npm run dev). Copy this file to ".dev.vars" and fill it in.
+# Never commit .dev.vars. On the live site, set the password with the command in README.md instead.
+NOTEBOOK_PASSWORD=
+# Optional: a long random string used to sign login cookies
+# SESSION_SECRET=
